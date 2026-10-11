@@ -84,7 +84,7 @@ class Biome:
         self.moisture = min(100.0, max(0.0, self.moisture + (drip - 0.9 - 0.8 * self.biomass) * dt))
 
         # injection acidifies slightly; buffering pulls back toward 6.6
-        self.ph += (-0.01 * i_cmd + 0.05 * (6.6 - self.ph)) * dt
+        self.ph += (-0.006 * i_cmd + 0.12 * (6.6 - self.ph)) * dt
         self.temperature += (23.0 + 0.8 * math.sin(self.t / 12.0) - self.temperature) * 0.2
         self.humidity += (60.0 + 5.0 * math.sin(self.t / 7.0) - self.humidity) * 0.2
 
@@ -118,7 +118,9 @@ def health_score(reading: dict) -> int:
             span = max(hi - lo, 1e-9)
             d = (lo - x) if x < lo else (x - hi)
             total += max(0.0, 1.0 - d / span)
-    return round(100.0 * total / len(RANGES))
+    score = round(100.0 * total / len(RANGES))
+    # never display a perfect score while any parameter is outside its window
+    return min(score, 99) if total < len(RANGES) else score
 
 
 def alerts(reading: dict) -> list[dict]:

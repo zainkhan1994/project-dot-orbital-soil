@@ -41,7 +41,8 @@ export function createBiome(seed = 42) {
   const r = rng(seed);
   const s = { n: 60, moisture: 58, ph: 6.6, temperature: 23, humidity: 60, radiation: 0.7, biomass: 0.25, t: 0, storm: 0, integral: 0, nTarget: 100 };
   const truth = { ...DEFAULT_PARAMS };
-  const kp = 0.04, ki = 0.002, iMax = 12;
+  const kp = 0.04, ki = 0.002, iMax = 12, probe = 1.5, probeHold = 4;
+  let level = 1, count = 0;
 
   const uptake = () => (1.2 * s.biomass * s.n) / (40 + s.n);
   const stress = () => band(s.n, 80, 120, 80) * band(s.moisture, 55, 70, 30) * band(s.ph, 6, 7, 1.5) * band(s.radiation, 0, 1.5, 3);
@@ -59,13 +60,15 @@ export function createBiome(seed = 42) {
       const nRead = s.n; // the sensor reads N[k]; the command I[k] then produces N[k+1]
       const err = s.nTarget - s.n;
       const raw = equilibriumInjection(s.nTarget, u, truth) + kp * err + ki * s.integral;
-      const iCmd = Math.min(iMax, Math.max(0, raw));
+      if (count % probeHold === 0) level = r.next() < 0.5 ? -1 : 1;
+      count += 1;
+      const iCmd = Math.min(iMax, Math.max(0, raw + probe * level));
       if (raw > 0 && raw < iMax && Math.abs(err) < 0.15 * s.nTarget) s.integral += err * dt;
       s.n = rk4(s.n, iCmd, u, truth, dt);
 
       const drip = s.moisture < 60 ? 2.4 : 0;
       s.moisture = Math.min(100, Math.max(0, s.moisture + (drip - 0.9 - 0.8 * s.biomass) * dt));
-      s.ph += (-0.01 * iCmd + 0.05 * (6.6 - s.ph)) * dt;
+      s.ph += (-0.006 * iCmd + 0.12 * (6.6 - s.ph)) * dt;
       s.temperature += (23 + 0.8 * Math.sin(s.t / 12) - s.temperature) * 0.2;
       s.humidity += (60 + 5 * Math.sin(s.t / 7) - s.humidity) * 0.2;
       s.biomass += 0.05 * s.biomass * (1 - s.biomass / 2) * stress() * dt;
@@ -90,7 +93,9 @@ export function healthScore(reading) {
     if (x >= lo && x <= hi) total += 1;
     else total += Math.max(0, 1 - (x < lo ? lo - x : x - hi) / Math.max(hi - lo, 1e-9));
   }
-  return Math.round((100 * total) / Object.keys(RANGES).length);
+  const score = Math.round((100 * total) / Object.keys(RANGES).length);
+  // never display a perfect score while any parameter is outside its window
+  return total < Object.keys(RANGES).length ? Math.min(score, 99) : score;
 }
 
 export function alertsFor(reading) {
@@ -103,18 +108,19 @@ export function alertsFor(reading) {
   return out;
 }
 
-// Least-squares fit of (alpha, beta, gamma) from rows with nitrogen, injection, uptake. Mirrors calibration.py.
+// Instrumental-variable fit of (alpha, beta, gamma) from rows with nitrogen, injection, uptake.
+// Mirrors backend/dot/calibration.py: N[k-1] is the instrument for the noisy regressor N[k].
 export function calibrate(rows, dt = 0.25, ridge = 1e-6) {
   if (rows.length < 30) throw new Error("need at least 30 samples");
   const A = [[ridge, 0, 0], [0, ridge, 0], [0, 0, ridge]];
   const b = [0, 0, 0];
-  for (let k = 0; k < rows.length - 1; k++) {
+  for (let k = 1; k < rows.length - 1; k++) {
     const x = [rows[k].injection, -rows[k].nitrogen, -rows[k].uptake];
+    const z = [rows[k].injection, -rows[k - 1].nitrogen, -rows[k].uptake];
     const y = (rows[k + 1].nitrogen - rows[k].nitrogen) / dt;
-    for (let a = 0; a < 3; a++) { b[a] += x[a] * y; for (let c = 0; c < 3; c++) A[a][c] += x[a] * x[c]; }
+    for (let a = 0; a < 3; a++) { b[a] += z[a] * y; for (let c = 0; c < 3; c++) A[a][c] += z[a] * x[c]; }
   }
-  // solve 3x3 by Gauss-Jordan
-  const M = A.map((row, i) => [...row, b[i]]);
+  const M = A.map((row, i) => [...row, b[i]]);   // solve the 3x3 system by Gauss-Jordan
   for (let i = 0; i < 3; i++) {
     let p = i;
     for (let j = i + 1; j < 3; j++) if (Math.abs(M[j][i]) > Math.abs(M[p][i])) p = j;

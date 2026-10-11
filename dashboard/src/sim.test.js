@@ -28,7 +28,9 @@ describe("biome", () => {
     const b = createBiome(7);
     const rows = Array.from({ length: 600 }, () => b.tick());
     const fit = calibrate(rows);
-    expect(Math.abs(fit.alpha - 0.8) / 0.8).toBeLessThan(0.3);
+    expect(Math.abs(fit.alpha - 0.8) / 0.8).toBeLessThan(0.2);
+    expect(Math.abs(fit.beta - 0.02) / 0.02).toBeLessThan(0.3);
+    expect(Math.abs(fit.gamma - 0.5) / 0.5).toBeLessThan(0.4);
   });
   it("health score is 100 inside every window", () => {
     expect(healthScore({ nitrogen: 100, moisture: 62, ph: 6.5, temperature: 23, humidity: 60, radiation: 0.7 })).toBe(100);
